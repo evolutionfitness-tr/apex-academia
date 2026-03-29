@@ -481,7 +481,14 @@ let caixaDate=today();
 
 const fmt=v=>'R$ '+Number(v||0).toFixed(2).replace('.',',').replace(/\B(?=(\d{3})+(?!\d))/g,'.');
 const fmtD=d=>{if(!d)return'—';const[y,m,dia]=d.split('-');return`${dia}/${m}/${y}`;};
-function today(){return new Date().toISOString().slice(0,10);}
+// Usa fuso local (BR) em vez de UTC para evitar bug de data virar no servidor
+function today(){
+  const d=new Date();
+  const y=d.getFullYear();
+  const m=String(d.getMonth()+1).padStart(2,'0');
+  const dia=String(d.getDate()).padStart(2,'0');
+  return `${y}-${m}-${dia}`;
+}
 const ini=n=>n.trim().split(' ').slice(0,2).map(w=>w[0]).join('').toUpperCase();
 const planoL=p=>({mensal:'Mensal',trimestral:'Trimestral',semestral:'Semestral',anual:'Anual'}[p]||p);
 const formaL=f=>({dinheiro:'Dinheiro',pix:'PIX',cartao:'Cartão'}[f]||f);
@@ -523,19 +530,30 @@ function goPage(id,el){
   if(el)el.classList.add('active');
   document.getElementById('pg-title').textContent=id==='alunos'?'Alunos':'Caixa';
   if(id==='alunos')renderAlunos();
-  if(id==='caixa')renderCaixa();
+  if(id==='caixa')fetchAndRenderCaixa();
 }
 
+async function fetchCaixaDate(date){
+  const items=await sbGet('caixa','data=eq.'+date+'&order=created_at.desc');
+  CAIXA=CAIXA.filter(c=>c.data!==date).concat(items);
+}
+async function fetchAndRenderCaixa(){
+  setSS('spin','Buscando...');
+  try{
+    await fetchCaixaDate(caixaDate);
+    setSS('ok','Sincronizado');
+    renderCaixa();
+  }catch(e){toast('Erro caixa: '+e.message,'err',5000);setSS('err','Erro');}
+}
 async function loadAll(){
   setSS('spin','Carregando...');
   try{
-    const[alunos,caixa,pags]=await Promise.all([
+    const[alunos,pags]=await Promise.all([
       sbGet('alunos','order=nome'),
-      sbGet('caixa','order=data.desc,created_at.desc'),
       sbGet('pagamentos','order=data.asc,created_at.asc')
     ]);
     ALUNOS=alunos.map(a=>({...a,pagamentos:pags.filter(p=>p.aluno_id===a.id)}));
-    CAIXA=caixa;
+    await fetchCaixaDate(caixaDate);
     document.getElementById('loading-screen').style.display='none';
     setSS('ok','Sincronizado');
     renderAlunos();renderCaixa();
@@ -543,7 +561,7 @@ async function loadAll(){
     document.getElementById('loading-screen').style.display='none';
     document.getElementById('error-msg').textContent=e.message;
     document.getElementById('error-screen').style.display='flex';
-    setSS('err','Erro de conexão');
+    setSS('err','Erro de conexao');
   }
 }
 
@@ -683,7 +701,7 @@ async function delAluno(id){
     ALUNOS=ALUNOS.filter(x=>x.id!==id);
     toast('Aluno removido.');
     setSS('ok','Sincronizado');
-    closeM('ov-det');renderAlunos();renderCaixa();
+    closeM('ov-det');renderAlunos();fetchAndRenderCaixa();
   }catch(e){toast('Erro: '+e.message,'err',7000);setSS('err','Erro');}
 }
 
@@ -817,7 +835,7 @@ async function savePag(){
       toast(`Pagamento de ${fmt(valor)} registrado e lançado no caixa.`);
     }
     setSS('ok','Sincronizado');
-    closeM('ov-pag');openDet(pagId);renderAlunos();renderCaixa();
+    closeM('ov-pag');openDet(pagId);renderAlunos();fetchAndRenderCaixa();
   }catch(e){toast('Erro: '+e.message,'err',7000);setSS('err','Erro');}
   finally{btn.disabled=false;btn.textContent=editPagId?'Salvar Alterações':'Confirmar Pagamento';}
 }
@@ -838,14 +856,20 @@ async function delPag(alunoId,pid){
     }else{await sbPatch('alunos',alunoId,{vencimento:null});a.vencimento=null;}
     toast('Pagamento e lançamento de caixa removidos.');
     setSS('ok','Sincronizado');
-    openDet(alunoId);renderAlunos();renderCaixa();
+    openDet(alunoId);renderAlunos();fetchAndRenderCaixa();
   }catch(e){toast('Erro: '+e.message,'err',7000);setSS('err','Erro');}
 }
 
 // ── CAIXA ──
-function navDate(dir){const d=new Date(caixaDate+'T00:00:00');d.setDate(d.getDate()+dir);caixaDate=d.toISOString().slice(0,10);document.getElementById('cx-pick').value=caixaDate;renderCaixa();}
-function resetDate(){caixaDate=today();document.getElementById('cx-pick').value=caixaDate;renderCaixa();}
-function pickDate(v){if(v){caixaDate=v;renderCaixa();}}
+function navDate(dir){
+  const d=new Date(caixaDate+'T12:00:00');
+  d.setDate(d.getDate()+dir);
+  caixaDate=d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0');
+  document.getElementById('cx-pick').value=caixaDate;
+  fetchAndRenderCaixa();
+}
+function resetDate(){caixaDate=today();document.getElementById('cx-pick').value=caixaDate;fetchAndRenderCaixa();}
+function pickDate(v){if(v){caixaDate=v;fetchAndRenderCaixa();}}
 
 function openCaixaModal(id=null){
   editCxId=id;
